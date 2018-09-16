@@ -3,11 +3,12 @@ rm(list = ls())
 #unload package to just memory allocation
 detach("package:xlsx", unload = TRUE)
 #increase java heap size
-options(java.parameters = "-Xmx8g")
-#options(java.home="C:/Program Files (x86)/Java/jre7/")
-install.packages(c("ggplot2","dplyr","stringr","scales","xlsx","data.table","tidyr","ggpubr","purrr", "gridExtra","broom","lazyeval", "Hmisc","readxl"))
-r1<-c("ggplot2","dplyr","stringr","scales","xlsx","data.table","tidyr","ggpubr","purrr", "gridExtra","broom","lazyeval", "Hmisc","readxl")
+options(java.parameters = "-Xmx8000m")
+#install.packages(c("ggplot2","dplyr","stringr","scales","xlsx","data.table","tidyr","ggpubr","purrr", "gridExtra","broom","lazyeval", "Hmisc","readxl"))
+#r1<-c("ggplot2","dplyr","stringr","scales","xlsx","data.table","tidyr","ggpubr","purrr", "gridExtra","broom","lazyeval", "Hmisc","readxl")
 
+install.packages(c("ggplot2","dplyr","xlsx","data.table","tidyr","purrr", "readxl"))
+r1 <- c("ggplot2","dplyr","xlsx","data.table","tidyr","purrr", "readxl")
 lapply(r1,require,character.only=TRUE)
 
 #cleaning/exploring the datasets###
@@ -54,9 +55,9 @@ read_excel_allsheets2 <- function(filename, tibble = FALSE) {
 
 
 #call the function to create a list contains all the workbooks and spreadsheets
-myfiles <- map(file_name2, read_excel_allsheets2) #run the function on every file
+myfiles_readxl <- map(file_name2, read_excel_allsheets) #run the function on every file
 
-names(myfiles) <- file_name2 #rename the list using file name
+names(myfiles_readxl) <- file_name2 #rename the list using file name
 
 #find the spreadsheet with the most variables so we know how many variables the data_info set should contain
 val_num <- c()
@@ -152,7 +153,7 @@ patient_key %>%
 #step 2.1.1 El Centro####
 #import dataset with patient key (ASSUMING ALL THE DATA FROM THE KEY FILE ARE FOR ENROLLED PARTICIPANTS)##
 #patient account number is equivalent to MRN and is the only unique identifier 
-el_central <- myfiles[14:41]
+el_central <- myfiles_readxl[15:42]
 el_central <- strip_name(el_central,"ec")
 #get the a1c table and demographics table
 ec_A1c <- as.data.frame(el_central[1])
@@ -164,6 +165,15 @@ ec_dem <- ec_dem[-103, ]
 #count the unique patients in the el centro EMR
 ec_dem %>%
   summarise(n_distinct(ec_Demographics.ElCentro_Page1_1.Patient.Account.Number))
+#check the patients whose EMR data not provided
+patient_key %>%
+  filter(grepl("el centro", COE.Location, ignore.case = TRUE)) %>%
+  anti_join(ec_dem, by = c("Site.ID.or.MRN" = "ec_Demographics.ElCentro_Page1_1.Patient.Account.Number"))
+
+#check the patients whose a1c is not provided
+ec_dem %>%
+  anti_join(ec_A1c, by = c("ec_Demographics.ElCentro_Page1_1.Patient.Account.Number" = "ec_A1c.ElCentro_Page1_1.Patient.Account.Number")) %>%
+  select(ec_Demographics.ElCentro_Page1_1.Patient.Account.Number)
 #count the unique patients who have a1c and if any of them don't have demographic info
 ec_A1c %>%
 #  summarise(n_distinct(ec_A1c.ElCentro_Page1_1.Patient.Account.Number)) %>%
@@ -183,6 +193,16 @@ ec_A1c %>%
   group_by(ec_A1c.ElCentro_Page1_1.Patient.Account.Number,ec_A1c.ElCentro_Page1_1.Encounter.Date) %>%
   filter(n_distinct(ec_A1c.ElCentro_Page1_1.Lab.Attribute.Value) > 1)
 
+#check number of people with 1 a1c and more than 1 a1c
+ec_A1c %>%
+  group_by(ec_A1c.ElCentro_Page1_1.Patient.Account.Number,ec_A1c.ElCentro_Page1_1.Encounter.Date) %>%
+  filter(row_number() == 1) %>%
+  group_by(ec_A1c.ElCentro_Page1_1.Patient.Account.Number) %>%
+  summarise(n=n()) %>%
+  filter(n == 1)
+
+
+
 #?decide if to remove any of the participants####
 
 #spread the measurements dataset so 1 observation represent 1 patient
@@ -195,12 +215,12 @@ ec_a1c_spread <- ec_A1c %>% #each patient is an oberservation good for calculati
 
 ec_a1c_united <- ec_A1c %>% #each visit is an obervation good for plotting
   group_by(ec_A1c.ElCentro_Page1_1.Patient.Account.Number, ec_A1c.ElCentro_Page1_1.Encounter.Date) %>%
-  filter(row_number()==1)
+  filter(row_number()==1) #multiple visit type for the same patient on the same date, this is to pick the first one
 
-#PMS####
+#step 2.1.1 PMS####
 #med_rec_nbr is equivalent to MRN, together with ECHO id are the unique identifiers
 #import dataset with patient key (ASSUMING ALL THE DATA FROM THE KEY FILE ARE FOR ENROLLED PARTICIPANTS)##
-pms <- myfiles[65]
+pms <- myfiles_readxl[66]
 #get the a1c table
 pms_A1c <- as.data.frame(pms[[1]][3])
 pms_dem <- as.data.frame(pms[[1]][5])
@@ -209,27 +229,53 @@ pms_dem <- as.data.frame(pms[[1]][5])
 pms_dem %>%
   summarise(n_distinct(PMS_Demographics.med_rec_nbr),
             n_distinct(PMS_Demographics.Echo_ID))
+#check the patients whose EMR is not provided
+patient_key %>%
+  filter(grepl("pms", COE.Location, ignore.case = TRUE)) %>%
+  anti_join(pms_dem, by = c("Site.ID.or.MRN" = "PMS_Demographics.med_rec_nbr"))
+
+
 #count the unique patients who have a1c and if any of them don't have demographic info
 pms_A1c %>%
-#    summarise(n_distinct(PMS_A1c.med_rec_nbr)) #%>%
-  anti_join(pms_dem, by = c("PMS_A1c.med_rec_nbr" = "PMS_Demographics.med_rec_nbr")) #anti-join shows the records in the primary dataset(left) that don't have a match in the secondary dataset(right), if won't matter if the "patient key" file doesn't have the demo. info for the patients in the a1c 
+    summarise(n_distinct(PMS_A1c.med_rec_nbr)) #%>%
+#  anti_join(pms_dem, by = c("PMS_A1c.med_rec_nbr" = "PMS_Demographics.med_rec_nbr")) #anti-join shows the records in the primary dataset(left) that don't have a match in the secondary dataset(right), if won't matter if the "patient key" file doesn't have the demo. info for the patients in the a1c 
+
+#check the patients whose demographics is provided but A1c is not provided
+pms_dem %>%
+  anti_join(pms_A1c, by = c("PMS_Demographics.med_rec_nbr" = "PMS_A1c.med_rec_nbr")) %>%
+  distinct(PMS_Demographics.med_rec_nbr, PMS_Demographics.Echo_ID)
+
 #check if patients who have a1c are not in the patient key file which might indicate that they are not program participants
 pms_A1c %>%   
   mutate(PMS_A1c.med_rec_nbr = as.character(PMS_A1c.med_rec_nbr)) %>%
   anti_join(patient_key, by = c("PMS_A1c.med_rec_nbr" = "Site.ID.or.MRN")) %>%
   select(PMS_A1c.med_rec_nbr) %>%
   distinct()
+
 #check if patients with the same MRN are the same person in the EMR dataset
 pms_A1c %>%
   group_by(PMS_A1c.med_rec_nbr, PMS_A1c.last_name) %>%
   summarise(n(),
             n_distinct(PMS_A1c.med_rec_nbr, PMS_A1c.last_name))
 
+#merge patient key and EMR to compare the difference
+pms_merge <- pms_dem %>%
+  select(1:6) %>%
+  left_join(patient_key, by = c("PMS_Demographics.med_rec_nbr" = "Site.ID.or.MRN"))
+write.xlsx(pms_merge, file = "H:/ECHO/PMS/pms_merge.xlsx")
+
 
 #spread the measurements dataset so 1 observation represent 1 patient
 
 #change date and time to date
-pms_A1c$visit_date <- as.Date(pms_A1c$PMS_A1c.create_timestamp)
+pms_A1c$visit_date <- as.Date(as.numeric(pms_A1c$PMS_A1c.create_timestamp), origin = "1899-12-30")
+
+#check how many patients have 1 a1c and have more than 1 a1c
+pms_A1c %>%
+  group_by(PMS_A1c.med_rec_nbr) %>%
+  summarise(n=n()) %>%
+  arrange(n) %>%
+  filter(n == 1)
 
 #assume it doesn't matter with the type of visit
 pms_a1c_spread <- pms_A1c %>% #each patient is an oberservation good for calculation time difference
@@ -242,20 +288,23 @@ pms_a1c_united <- pms_A1c %>% #each visit is an obervation good for plotting
   filter(row_number()==1) #select the first row of each group
 
 
-#La Casa####
+#step 2.1.1 La Casa####
 #pat person nbr is equivalent to MRN and is the only unique identifier
 #import dataset with patient key (ASSUMING ALL THE DATA FROM THE KEY FILE ARE FOR ENROLLED PARTICIPANTS)##
-  casa <- myfiles[63]
+  casa <- myfiles_readxl[64]
 #get the a1c table
 casa_A1c <- as.data.frame(casa[[1]][3])
 casa_dem <- as.data.frame(casa[[1]][1])
+
+#casa_A1c a1c value imported weird by using read_excel, so have to import separately
+casa_A1c <- read.xlsx2(file = "H:/ECHO_raw/La Casa/La Casa - ECHO Enrolled 2018.xlsx", sheetIndex = 3)
 
 #count the unique patients in the la casa EMR
 casa_dem %>%
   summarise(n_distinct(LaCasa_Demographics.Pat.Person.Nbr))
 #count the unique patients who have a1c and if any of them don't have demographic info
 casa_A1c %>%
-  #  summarise(n_distinct(LaCasa_A1c.Pat.Person.Nbr)) #%>%
+    #summarise(n_distinct(LaCasa_A1c.Pat.Person.Nbr)) #%>%
   anti_join(casa_dem, by = c("LaCasa_A1c.Pat.Person.Nbr" = "LaCasa_Demographics.Pat.Person.Nbr")) #anti-join shows the records in the primary dataset(left) that don't have a match in the secondary dataset(right), if won't matter if the "patient key" file doesn't have the demo. info for the patients in the a1c 
 
 #because the format of the MRN are different in the patient key file and the emr data, have to merge two and compare one by one
@@ -277,6 +326,22 @@ write.xlsx(casa_merged, file = "H:/ECHO/La Casa/La Casa Merged.xlsx")
 
 #spread the measurements dataset so 1 observation represent 1 patient
 
+#convert date to date type
+casa_A1c$Result.Report.Date <- as.Date(as.numeric(as.character(casa_A1c$Result.Report.Date)), origin = "1899-12-30")
+
+#count if the a1c values measured on the same day are different
+casa_A1c %>%
+  group_by(Pat.Person.Nbr,Result.Report.Date) %>%
+  summarise(n = n_distinct(Result.Value..Numeric.)) #%>%
+  filter(n > 1)
+#count number of patients have 1 a1c and more than 1 a1c
+casa_A1c %>%
+  group_by(Pat.Person.Nbr,Result.Report.Date) %>%
+  filter(row_number() == 1) %>%
+  group_by(Pat.Person.Nbr) %>%
+  summarise(n = n()) %>%
+  arrange(n)
+
 #assume it doesn't matter with the type of visit
 casa_a1c_spread <- casa_A1c %>% #each patient is an oberservation good for calculation time difference
   group_by(LaCasa_A1c.Pat.Person.Nbr, LaCasa_A1c.Result.Report.Date) %>%
@@ -284,7 +349,7 @@ casa_a1c_spread <- casa_A1c %>% #each patient is an oberservation good for calcu
   spread(LaCasa_A1c.Result.Report.Date, LaCasa_A1c.Result.Value..Numeric. ) 
 
 casa_a1c_united <- casa_A1c %>% #each visit is an obervation good for plotting
-  group_by(LaCasa_A1c.Pat.Person.Nbr, LaCasa_A1c.Result.Report.Date) %>%
+  group_by(Pat.Person.Nbr, Result.Report.Date) %>%
   filter(row_number()==1) #select the first row of each group
 
 casa_A1c %>% #each visit is an obervation good for plotting
@@ -292,11 +357,14 @@ casa_A1c %>% #each visit is an obervation good for plotting
   summarise(n=n()) %>%
   filter(n>1)  #4 patients have multiple a1c values on the same day 26017.0, 29774.0, 48277.1, 87926
 
-#HMS####
+#step 2.1.1 HMS####
 #Account number is equivalent to MRN, together with ECHO id are the unique identifiers
 #import dataset with patient key (ASSUMING ALL THE DATA FROM THE KEY FILE ARE FOR ENROLLED PARTICIPANTS)##
-hms_key <- read.xlsx2(file = "H:/ECHO_raw/HMS/HMS - Endo Echo Data.xlsx", sheetIndex = 1)
 
+hms_A1c <- read.xlsx2(file = "H:/ECHO_raw/HMS/HMS - Endo Echo Data.xlsx", sheetIndex = 1)
+hms_dem <- read.xlsx2(file = "H:/ECHO_raw/HMS/HMS - Endo Echo Demographics.xlsx", sheetIndex = 1)
+hms_key <- read.xlsx2(file = "H:/ECHO_raw/HMS/HMS - Endo Echo Demographics.xlsx", sheetIndex = 2)
+ 
 hms_1 <- myfiles[62]
 hms_2 <- myfiles[63]
 #get the a1c table
@@ -306,7 +374,7 @@ hms_key <- as.data.frame(hms_2[[1]][2])
 
 #count the unique patients who have demographic info
 hms_key %>%
-  summarise(n_distinct(HMS_Sheet1.HMS_MRN))
+  summarise(n_distinct(HMS_MRN))
 
 #check if any key doesn't have demographic info
 hms_key %>%
@@ -316,15 +384,19 @@ hms_key %>%
 
 #create a1c and demo dataset for hms participants 
 hms_dem_par <- hms_dem %>%
-  semi_join(hms_key, by = c("HMS_Demographics.AccountNo" = "HMS_Sheet1.HMS_MRN")) %>% #semi_join to use patient key as a filter to ge participants data
+  semi_join(hms_key, by = c("AccountNo" = "HMS_MRN")) %>% #semi_join to use patient key as a filter to get participants data
   #summarise(n_distinct(HMS_Demographics.AccountNo))
-  group_by(HMS_Demographics.AccountNo) %>%
+  group_by(AccountNo) %>%
   filter(row_number() == 1)
 
 hms_A1c_par <- hms_key %>%
-  group_by(HMS_Sheet1.HMS_MRN) %>%
+  group_by(HMS_MRN) %>%
   filter(row_number() == 1) %>%
-  inner_join(hms_A1c, by = c("HMS_Sheet1.HMS_MRN" = "HMS_A1C.AccountNo"))
+  inner_join(hms_A1c, by = c("HMS_MRN" = "AccountNo"))
+
+#count number of patients who are participants but don't have a1c
+hms_dem_par %>%
+  anti_join(hms_A1c_par, by = c("AccountNo" = "HMS_MRN"))
 
 #count the unique patients who have a1c and if any of them don't have demographic info
 hms_A1c_par %>%
@@ -334,8 +406,8 @@ hms_A1c_par %>%
 #check if patients who have a1c are not in the patient key file which might indicate that they are not program participants
 hms_A1c_par %>%
   group_by() %>%
-  anti_join(patient_key, by = c("HMS_Sheet1.HMS_MRN" = "Site.ID.or.MRN")) %>%
-  select(HMS_Sheet1.HMS_MRN) %>%
+  anti_join(patient_key, by = c("HMS_MRN" = "Site.ID.or.MRN")) %>%
+  select(HMS_MRN) %>%
   distinct()
 
 #assume it doesn't matter with the type of visit
@@ -345,25 +417,55 @@ hms_a1c_spread <- hms_A1c_par %>% #each patient is an oberservation good for cal
   spread(HMS_A1C.EncDate, HMS_A1C.LabValue) 
 
 HMS_a1c_united <- hms_A1c_par %>% #each visit is an obervation good for plotting
-  group_by(HMS_Sheet1.HMS_MRN, HMS_A1C.EncDate) %>%
+  group_by(HMS_MRN, EncDate) %>%
   filter(row_number()==1) #select the first row of each group
 
+#count # of patients who have 1 A1c and more
+HMS_a1c_united %>%
+  group_by(HMS_MRN) %>%
+  summarise(n=n()) %>%
+  arrange(n)
 
-#First Choice####
+#step 2.1.1 First Choice####
 #MRN and ECHO ID are the unique identifiers
 #import dataset with patient key##
-FC <- myfiles[43]
-FC_dem <- myfiles[42]
+FC_dem <- myfiles_readxl[43]
+FC <- myfiles_readxl[44]
+
 #get the a1c table and demographics table
 fc_A1c <- as.data.frame(FC[[1]][1])
-fc_A1c_unique <- as.data.frame(FC[[1]][2])
 fc_A1c <- firstrow_to_colname(fc_A1c)
+
+fc_A1c_unique <- as.data.frame(FC[[1]][2])
 fc_A1c_unique <- firstrow_to_colname(fc_A1c_unique)
+
 fc_A1c$DOB <- as.Date(as.numeric(fc_A1c$DOB), origin = "1899-12-30")
 fc_A1c$DATE <- as.Date(as.numeric(fc_A1c$DATE), origin = "1899-12-30")
 
 fc_dem <- as.data.frame(FC_dem)
+colnames(fc_dem)[6] <- "Person Id2" #rename the colname since there's a duplicate
 fc_dem <- firstrow_to_colname(fc_dem)
+
+#check the unique echo id, ECHO id indicates that the person is a participants
+fc_dem %>%
+  summarise(n_distinct(`ECHO ID`)) #echo id not comprehensive in this set
+
+#get the ECHO ID and MRN for patients who are participants
+fc_A1c_unique_par <- fc_A1c_unique %>%
+  filter(!is.na(`ECHO#`))
+
+#count the number of people who have 1 a1c and more than 1 a1c
+
+fc_A1c %>%
+  semi_join(fc_A1c_unique_par, by = "MRN") %>%
+  group_by(MRN, DATE) %>%
+  filter(row_number() == 1) %>%
+  group_by(MRN) %>%
+  summarise(n = n()) %>%
+  filter(n == 1)
+
+fc_A1c_unique_par %>%
+  anti_join(patient_key, by = c("MRN"="Site.ID.or.MRN"))
 
 #check if any key of study participants doesn't have demographic info
 fc_A1c %>%
@@ -405,9 +507,15 @@ fc_a1c_united <- fc_A1c %>% #each visit is an obervation good for plotting
   filter(row_number()==1) #select the first row of each group
 
 
+#step 2.1.1 RGH####
+#MRN is the unique identifier that only exisits in the EMR
+#import dataset with patient key##
+rgh <- read_excel("H:/ECHO_raw/RGH/Roosevelt General Hospital Clinic - All Data.xlsx", sheet = 1)
 
 
-
+rgh_a1c <- rgh %>%
+    select(c(1:12,13)) %>%
+    filter(`Enrolled in Endo ECHO` == "Yes")
 
 
 
@@ -423,14 +531,7 @@ a1c_ec <- ec_a1c_united %>%
     mutate(site = "EC") %>%
     select(ec_A1c.ElCentro_Page1_1.Patient.Account.Number, site, ec_A1c.ElCentro_Page1_1.Encounter.Date, ec_A1c.ElCentro_Page1_1.Lab.Attribute.Value)
 colnames(a1c_ec) <- colnames_a1c
-a1c_ec$visit_date <- as.POSIXlt(as.Date(a1c_ec$visit_date))
-
-a1c_casa <- casa_a1c_united %>%
-  mutate(site = "La Casa") %>%
-  select(LaCasa_A1c.Pat.Person.Nbr, site, LaCasa_A1c.Result.Report.Date, LaCasa_A1c.Result.Value..Numeric.)
-colnames(a1c_casa) <- colnames_a1c
-a1c_casa$a1c <- as.character(a1c_casa$a1c)
-a1c_casa$visit_date <- as.POSIXlt(as.Date(a1c_casa$visit_date))
+a1c_ec$visit_date <- as.Date(as.numeric(a1c_ec$visit_date), origin = "1899-12-30")
 
 a1c_pms <- pms_a1c_united %>%
   mutate(site = "pms") %>%
@@ -438,6 +539,38 @@ a1c_pms <- pms_a1c_united %>%
 colnames(a1c_pms) <- colnames_a1c
 a1c_pms$MRN <- as.character(a1c_pms$MRN)
 a1c_pms$visit_date <- as.POSIXlt(as.Date(a1c_pms$visit_date))
+
+a1c_casa <- casa_a1c_united %>%
+  mutate(site = "La Casa") %>%
+  select(Pat.Person.Nbr, site, Result.Report.Date, Result.Value..Numeric.)
+colnames(a1c_casa) <- colnames_a1c
+a1c_casa$a1c <- as.character(a1c_casa$a1c)
+a1c_casa$visit_date <- as.POSIXlt(as.Date(a1c_casa$visit_date))
+
+a1c_hms <- HMS_a1c_united %>%
+  mutate(site = "hms") %>%
+  select(HMS_MRN, site, EncDate, LabValue)
+colnames(a1c_hms) <- colnames_a1c
+a1c_hms$EncDate <- as.Date(as.numeric(as.character(a1c_hms$EncDate)), origin = "1899-12-30")
+
+
+
+#check abnormal a1c
+detect_var <- function(df, var){
+  df %>%
+    group_by_(var) %>%
+    summarise(n = n()) %>%
+    arrange(n)
+}
+
+a1c_4 <- rbind.data.frame(a1c_casa, a1c_ec, a1c_hms, a1c_pms)
+
+
+
+write.xlsx(as.data.frame(a1c_4), file="H:/ECHO/vars/a1c/a1c.xlsx")
+
+
+#####################################################################################################################################################
 
 a1c_3 <- rbind.data.frame(a1c_casa, a1c_ec, a1c_pms)  #do i have to convert date using posixlt? tried rbind and bind_rows all failed
 a1c_3$visit_date <- as.Date(a1c_3$visit_date)
